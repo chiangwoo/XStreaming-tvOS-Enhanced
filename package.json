@@ -8,7 +8,11 @@
     "lint": "eslint .",
     "start": "react-native start",
     "bundle:ios": "npx react-native bundle --entry-file index.js --platform ios --dev false --bundle-output ios/bundle/main.jsbundle --assets-dest ios/bundle --reset-cache",
+    "bundle:tvos": "npx react-native bundle --entry-file index.js --platform tvos --dev false --bundle-output ios/bundle/main.tvos.jsbundle --assets-dest ios/bundle --reset-cache",
     "release:android": "cd ./android && ./gradlew assembleRelease",
+    "build:tvos": "node scripts/build-tvos.js",
+    "archive:tvos": "xcodebuild -workspace ios/XStreaming.xcworkspace -scheme XStreaming -destination 'generic/platform=tvOS' -configuration Release archive -archivePath build/XStreaming-tvOS.xcarchive",
+    "export:tvos": "xcodebuild -exportArchive -archivePath build/XStreaming-tvOS.xcarchive -exportPath build/tvos-export -exportOptionsPlist scripts/tvos-export-options.plist",
     "postinstall": "patch-package",
     "test": "jest"
   },
