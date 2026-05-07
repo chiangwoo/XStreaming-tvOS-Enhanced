@@ -82,14 +82,6 @@ target 'XStreaming' do
         Pod::UI.puts "✅ Fixed glog raw_logging.cc for tvOS"
       end
     end
-    
-    # 修复 raw_logging.cc - safe_write 宏中的 syscall
-    if File.exist?(glog_raw_logging)
-      content = File.read(glog_raw_logging)
-      unless content.include?('#define safe_write')
-        Pod::UI.puts "⚠️  raw_logging.cc safe_write already fixed or not found"
-      end
-    end
   end
 
   # ============================================
@@ -148,11 +140,8 @@ target 'XStreaming' do
       end
       
       # 修复 4: handleLongPress 方法 - 整个方法用条件编译包裹
-      # 这是最关键的修复，因为整个方法都是 iOS-only API
       if content.include?('- (void)handleLongPress:(UILongPressGestureRecognizer *)gesture')
         unless content.include?('#if TARGET_OS_TV')
-          # 找到 handleLongPress 方法的开始和结束
-          # 替换整个方法为条件编译版本
           old_method = %r{
             - \(void\)handleLongPress:\(UILongPressGestureRecognizer \*\)gesture\s*\{.*?^\s*\}
           }x
@@ -223,38 +212,109 @@ OBJC
     end
     
     # ==========================================
-    # 修复 RCTConvert.h - UIInterfaceOrientationMask
+    # 修复 RCTConvert.mm - UIDataDetectorTypes, UIInterfaceOrientationMask, UIModalPresentationStyle
     # ==========================================
-    rct_convert_h = File.join(rn_path, 'React/Base/RCTConvert.h')
-    if File.exist?(rct_convert_h)
-      content = File.read(rct_convert_h)
-      if content.include?('+ (UIInterfaceOrientationMask)UIInterfaceOrientationMask:') && !content.include?('#if !TARGET_OS_TV')
-        content = content.gsub(
-          /(\+ \(UIInterfaceOrientationMask\)UIInterfaceOrientationMask:\(NSString \*\)orientation;)/,
-          "#if !TARGET_OS_TV\n\\1\n#endif"
-        )
-        File.chmod(0644, rct_convert_h)
-        File.write(rct_convert_h, content)
-        File.chmod(0444, rct_convert_h)
-        Pod::UI.puts "✅ Fixed RCTConvert.h for tvOS"
+    rct_convert_mm = File.join(rn_path, 'React/Base/RCTConvert.mm')
+    if File.exist?(rct_convert_mm)
+      content = File.read(rct_convert_mm)
+      modified = false
+      
+      # 修复 UIDataDetectorTypes - 整个宏用条件编译包裹
+      if content.include?('RCT_MULTI_ENUM_CONVERTER') && content.include?('UIDataDetectorTypes')
+        unless content.match?(/#if !TARGET_OS_TV\n.*RCT_MULTI_ENUM_CONVERTER.*UIDataDetectorTypes/m)
+          content = content.gsub(
+            /RCT_MULTI_ENUM_CONVERTER\(\s*UIDataDetectorTypes.*?unsignedLongLongValue\)/m,
+            "#if !TARGET_OS_TV\nRCT_MULTI_ENUM_CONVERTER(\n    UIDataDetectorTypes,\n    (@{\n      @\"phoneNumber\" : @(UIDataDetectorTypePhoneNumber),\n      @\"link\" : @(UIDataDetectorTypeLink),\n      @\"address\" : @(UIDataDetectorTypeAddress),\n      @\"calendarEvent\" : @(UIDataDetectorTypeCalendarEvent),\n      @\"trackingNumber\" : @(UIDataDetectorTypeShipmentTrackingNumber),\n      @\"flightNumber\" : @(UIDataDetectorTypeFlightNumber),\n      @\"lookupSuggestion\" : @(UIDataDetectorTypeLookupSuggestion),\n      @\"none\" : @(UIDataDetectorTypeNone),\n      @\"all\" : @(UIDataDetectorTypeAll),\n    }),\n    UIDataDetectorTypePhoneNumber,\n    unsignedLongLongValue)\n#endif"
+          )
+          modified = true
+        end
+      end
+      
+      # 修复 UIInterfaceOrientationMask
+      if content.include?('RCT_ENUM_CONVERTER') && content.include?('UIInterfaceOrientationMask')
+        unless content.match?(/#if !TARGET_OS_TV\n.*RCT_ENUM_CONVERTER.*UIInterfaceOrientationMask/m)
+          content = content.gsub(
+            /RCT_ENUM_CONVERTER\(\s*UIInterfaceOrientationMask.*?unsignedIntegerValue\)/m,
+            "#if !TARGET_OS_TV\nRCT_ENUM_CONVERTER(\n    UIInterfaceOrientationMask,\n    (@{\n      @\"ALL\" : @(UIInterfaceOrientationMaskAll),\n      @\"PORTRAIT\" : @(UIInterfaceOrientationMaskPortrait),\n      @\"LANDSCAPE\" : @(UIInterfaceOrientationMaskLandscape),\n      @\"LANDSCAPE_LEFT\" : @(UIInterfaceOrientationMaskLandscapeLeft),\n      @\"LANDSCAPE_RIGHT\" : @(UIInterfaceOrientationMaskLandscapeRight),\n    }),\n    NSNotFound,\n    unsignedIntegerValue)\n#endif"
+          )
+          modified = true
+        end
+      end
+      
+      # 修复 UIModalPresentationStyle
+      if content.include?('RCT_ENUM_CONVERTER') && content.include?('UIModalPresentationStyle')
+        unless content.match?(/#if !TARGET_OS_TV\n.*RCT_ENUM_CONVERTER.*UIModalPresentationStyle/m)
+          content = content.gsub(
+            /RCT_ENUM_CONVERTER\(\s*UIModalPresentationStyle.*?integerValue\)/m,
+            "#if !TARGET_OS_TV\nRCT_ENUM_CONVERTER(\n    UIModalPresentationStyle,\n    (@{\n      @\"fullScreen\" : @(UIModalPresentationFullScreen),\n      @\"pageSheet\" : @(UIModalPresentationPageSheet),\n      @\"formSheet\" : @(UIModalPresentationFormSheet),\n      @\"overFullScreen\" : @(UIModalPresentationOverFullScreen),\n    }),\n    UIModalPresentationFullScreen,\n    integerValue)\n#endif"
+          )
+          modified = true
+        end
+      end
+      
+      if modified
+        File.chmod(0644, rct_convert_mm)
+        File.write(rct_convert_mm, content)
+        File.chmod(0444, rct_convert_mm)
+        Pod::UI.puts "✅ Fixed RCTConvert.mm for tvOS"
       end
     end
     
     # ==========================================
-    # 修复 RCTUtils.h - UIStatusBarManager
+    # 修复 RCTUtils.m - UIStatusBarManager
     # ==========================================
-    rct_utils_h = File.join(rn_path, 'React/Base/RCTUtils.h')
-    if File.exist?(rct_utils_h)
-      content = File.read(rct_utils_h)
-      if content.include?('RCT_EXTERN UIStatusBarManager *RCTUIStatusBarManager') && !content.include?('#if !TARGET_OS_TV')
+    rct_utils_mm = File.join(rn_path, 'React/Base/RCTUtils.m')
+    if File.exist?(rct_utils_mm)
+      content = File.read(rct_utils_mm)
+      if content.include?('UIStatusBarManager') && !content.match?(/#if !TARGET_OS_TV.*UIStatusBarManager/m)
         content = content.gsub(
-          /(RCT_EXTERN UIStatusBarManager \*RCTUIStatusBarManager\(void\);)/,
-          "#if !TARGET_OS_TV\n\\1\n#endif"
+          /RCT_EXTERN UIStatusBarManager \*RCTUIStatusBarManager\(void\);/,
+          "#if !TARGET_OS_TV\nRCT_EXTERN UIStatusBarManager *RCTUIStatusBarManager(void);\n#endif"
         )
-        File.chmod(0644, rct_utils_h)
-        File.write(rct_utils_h, content)
-        File.chmod(0444, rct_utils_h)
-        Pod::UI.puts "✅ Fixed RCTUtils.h for tvOS"
+        File.chmod(0644, rct_utils_mm)
+        File.write(rct_utils_mm, content)
+        File.chmod(0444, rct_utils_mm)
+        Pod::UI.puts "✅ Fixed RCTUtils.m for tvOS"
+      end
+    end
+    
+    # ==========================================
+    # 修复 RCTRefreshControl.m - UIRefreshControl
+    # ==========================================
+    rct_refresh_m = File.join(rn_path, 'Libraries/Components/RefreshControl/RCTRefreshControl.m')
+    if File.exist?(rct_refresh_m)
+      content = File.read(rct_refresh_m)
+      unless content.include?('#if !TARGET_OS_TV')
+        content = content.gsub(
+          /(#import <React\/RCTRefreshControl\.h>)/,
+          "#if TARGET_OS_TV\n// RCTRefreshControl is not available on tvOS\n#else\n\\1"
+        )
+        content = content.gsub(
+          /(RCT_EXTERN_MODULE\(RCTRefreshControl, NSObject\));/,
+          "\\1\n#endif"
+        )
+        File.chmod(0644, rct_refresh_m)
+        File.write(rct_refresh_m, content)
+        File.chmod(0444, rct_refresh_m)
+        Pod::UI.puts "✅ Fixed RCTRefreshControl.m for tvOS"
+      end
+    end
+    
+    # ==========================================
+    # 修复 RCTRedBoxExtraDataViewController.m - separatorStyle
+    # ==========================================
+    rct_redbox_m = File.join(rn_path, 'React/Core/RCTRedBoxExtraDataViewController.m')
+    if File.exist?(rct_redbox_m)
+      content = File.read(rct_redbox_m)
+      if content.include?('separatorStyle') && !content.match?(/#if !TARGET_OS_TV.*separatorStyle/m)
+        content = content.gsub(
+          /\[self\.tableView setSeparatorStyle:UITableViewCellSeparatorStyleNone\];/,
+          "#if !TARGET_OS_TV\n    [self.tableView setSeparatorStyle:UITableViewCellSeparatorStyleNone];\n#endif"
+        )
+        File.chmod(0644, rct_redbox_m)
+        File.write(rct_redbox_m, content)
+        File.chmod(0444, rct_redbox_m)
+        Pod::UI.puts "✅ Fixed RCTRedBoxExtraDataViewController.m for tvOS"
       end
     end
   end
@@ -266,7 +326,6 @@ OBJC
   def fix_privacy_info_duplicate(installer)
     project_root = File.expand_path('..', __dir__)
     root_privacy = File.join(project_root, 'ios/PrivacyInfo.xcprivacy')
-    xcodeproj_privacy = File.join(project_root, 'ios/XStreaming.xcodeproj/project.xcworkspace/xcshareddata/swiftpm')
     
     if File.exist?(root_privacy)
       File.delete(root_privacy)
@@ -280,14 +339,34 @@ OBJC
   # ============================================
   def fix_react_native_cookies_for_tvos(installer)
     sandbox_root = installer.sandbox.root.to_s
-    # 修正路径：@react-native-cookies 实际目录名可能是 @react-native-cookies
-    cookies_header = File.join(sandbox_root, "Pods/@react-native-cookies/cookies/ios/RNCookieManagerIOS/RNCookieManagerIOS.h")
-    cookies_impl = File.join(sandbox_root, "Pods/@react-native-cookies/cookies/ios/RNCookieManagerIOS/RNCookieManagerIOS.m")
+    # 尝试多种可能的路径
+    possible_paths = [
+      File.join(sandbox_root, "Pods/@react-native-cookies/cookies/ios/RNCookieManagerIOS"),
+      File.join(sandbox_root, "Pods/React-native-cookies/ios/RNCookieManagerIOS"),
+      File.join(sandbox_root, "Pods/react-native-cookies/ios/RNCookieManagerIOS")
+    ]
+    
+    cookies_dir = nil
+    possible_paths.each do |path|
+      if File.exist?(path)
+        cookies_dir = path
+        break
+      end
+    end
+    
+    unless cookies_dir
+      Pod::UI.puts "⚠️  react-native-cookies not found"
+      return
+    end
+    
+    cookies_header = File.join(cookies_dir, 'RNCookieManagerIOS.h')
+    cookies_impl = File.join(cookies_dir, 'RNCookieManagerIOS.m')
     
     # 修复头文件
     if File.exist?(cookies_header)
       content = File.read(cookies_header)
       unless content.include?('#if !TARGET_OS_TV')
+        # 添加条件编译包裹整个 WebKit import
         content = content.gsub(
           /#import <WebKit\/WebKit\.h>/,
           "#if !TARGET_OS_TV\n#import <WebKit/WebKit.h>\n#endif"
@@ -299,21 +378,33 @@ OBJC
       end
     end
     
-    # 修复实现文件
+    # 修复实现文件 - 包裹整个 WebKit 相关代码
     if File.exist?(cookies_impl)
       content = File.read(cookies_impl)
-      unless content.include?('#if !TARGET_OS_TV')
+      modified = false
+      
+      # 包裹 WebKit import
+      unless content.match?(/#if !TARGET_OS_TV\n#import <WebKit\/WebKit\.h>\n#endif/m)
         content = content.gsub(
           /#import <WebKit\/WebKit\.h>/,
           "#if !TARGET_OS_TV\n#import <WebKit/WebKit.h>\n#endif"
         )
-        # 修复 WKHTTPCookieStore 相关的代码
-        if content.include?('WKHTTPCookieStore')
+        modified = true
+      end
+      
+      # 包裹 WKHTTPCookieStore 相关代码
+      if content.include?('WKHTTPCookieStore')
+        unless content.match?(/#if !TARGET_OS_TV.*WKHTTPCookieStore/m)
+          # 包裹 cookieStore 的使用
           content = content.gsub(
             /(\[\[WKWebsiteDataStore defaultDataStore\] cookieStore\])/,
             "#if !TARGET_OS_TV\n\\1\n#endif"
           )
+          modified = true
         end
+      end
+      
+      if modified
         File.chmod(0644, cookies_impl)
         File.write(cookies_impl, content)
         File.chmod(0444, cookies_impl)
