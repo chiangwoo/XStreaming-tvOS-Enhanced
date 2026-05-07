@@ -8,6 +8,12 @@ require Pod::Executable.execute_command('node', ['-p',
 # iOS 平台版本
 platform :ios, '15.1'
 
+# ============================================
+# 禁用 New Architecture (Fabric) - 解决 react-native-screens codegen 问题
+# RN 0.76.5 的 codegen 与 react-native-screens 4.x 不兼容
+# ============================================
+ENV['RCT_NEW_ARCH_ENABLED'] = '0'
+
 prepare_react_native_project!
 
 linkage = ENV['USE_FRAMEWORKS']
@@ -21,7 +27,11 @@ target 'XStreaming' do
 
   use_react_native!(
     :path => config[:reactNativePath],
-    :app_path => "#{Pod::Config.instance.installation_root}/.."
+    :app_path => "#{Pod::Config.instance.installation_root}/..",
+    # 禁用 Fabric (New Architecture)
+    :fabric_enabled => false,
+    # 禁用 Hermes
+    :hermes_enabled => true
   )
 
   target 'XStreamingTests' do
@@ -39,7 +49,9 @@ target 'XStreaming' do
     react_native_post_install(
       installer,
       config[:reactNativePath],
-      :mac_catalyst_enabled => false
+      :mac_catalyst_enabled => false,
+      # 确保旧架构
+      :fabric_enabled => false
     )
     
     # tvOS 部署目标配置
