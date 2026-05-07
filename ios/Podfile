@@ -280,8 +280,9 @@ OBJC
   # ============================================
   def fix_react_native_cookies_for_tvos(installer)
     sandbox_root = installer.sandbox.root.to_s
-    cookies_header = File.join(sandbox_root, 'Pods/@react-native-cookies/cookies/ios/RNCookieManagerIOS/RNCookieManagerIOS.h')
-    cookies_impl = File.join(sandbox_root, 'Pods/@react-native-cookies/cookies/ios/RNCookieManagerIOS/RNCookieManagerIOS.m')
+    # 修正路径：@react-native-cookies 实际目录名可能是 @react-native-cookies
+    cookies_header = File.join(sandbox_root, "Pods/@react-native-cookies/cookies/ios/RNCookieManagerIOS/RNCookieManagerIOS.h")
+    cookies_impl = File.join(sandbox_root, "Pods/@react-native-cookies/cookies/ios/RNCookieManagerIOS/RNCookieManagerIOS.m")
     
     # 修复头文件
     if File.exist?(cookies_header)
