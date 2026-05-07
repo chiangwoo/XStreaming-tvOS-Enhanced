@@ -82,6 +82,76 @@ target 'XStreaming' do
       end
     end
   end
+
+  # ============================================
+  # 修复 React Native 0.76.5 Text 组件 tvOS 不兼容问题
+  # RCTTextView 和 RCTUITextView 使用了 tvOS 不支持的 API
+  # ============================================
+  def fix_rn_text_for_tvos(installer)
+    project_root = File.join(installer.sandbox_root, '..', '..', '..')
+    rn_path = File.join(project_root, 'node_modules/react-native')
+    
+    unless File.exist?(rn_path)
+      Pod::UI.puts "⚠️  node_modules/react-native not found, skipping RCTTextView fix"
+      return
+    end
+
+    # 修复 RCTTextView.mm
+    rct_text_view = File.join(rn_path, 'Libraries/Text/Text/RCTTextView.mm')
+    if File.exist?(rct_text_view)
+      content = File.read(rct_text_view)
+      # 检查是否已经修复过
+      unless content.include?('#if !TARGET_OS_TV') && content.include?('UIEditMenuInteractionDelegate')
+        # 修复 interface 声明
+        content = content.gsub(
+          /@interface RCTTextView \(\) <UIEditMenuInteractionDelegate>/,
+          "@interface RCTTextView () <UIEditMenuInteractionDelegate>\n@property (nonatomic, nullable) UIEditMenuInteraction *editMenuInteraction API_AVAILABLE(ios(16.0));\n@end\n\n#if TARGET_OS_TV\n@interface RCTTextView ()\n@end"
+        )
+        # 修复 enableContextMenu 方法
+        content = content.gsub(
+          /_editMenuInteraction = \[\[UIEditMenuInteraction alloc\] initWithDelegate:self\];/,
+          "#if !TARGET_OS_TV\n    _editMenuInteraction = [[UIEditMenuInteraction alloc] initWithDelegate:self];\n    [self addInteraction:_editMenuInteraction];\n#endif"
+        )
+        # 修复 disableContextMenu 方法
+        content = content.gsub(
+          /\[self removeInteraction:_editMenuInteraction\];/,
+          "#if !TARGET_OS_TV\n    [self removeInteraction:_editMenuInteraction];\n    _editMenuInteraction = nil;\n#endif"
+        )
+        # 修复 handleLongPress 方法中的 UIEditMenuInteraction
+        content = content.gsub(
+          /UIEditMenuConfiguration \*config = \[UIEditMenuConfiguration configurationWithIdentifier:nil sourcePoint:location\];/,
+          "#if !TARGET_OS_TV\n    UIEditMenuConfiguration *config = [UIEditMenuConfiguration configurationWithIdentifier:nil sourcePoint:location];\n    if (_editMenuInteraction) {\n      [_editMenuInteraction presentEditMenuWithConfiguration:config];\n    }\n#endif"
+        )
+        # 修复 UIMenuController
+        content = content.gsub(
+          /UIMenuController \*menuController = \[UIMenuController sharedMenuController\];/,
+          "#if !TARGET_OS_TV\n  UIMenuController *menuController = [UIMenuController sharedMenuController];\n\n  if (menuController.isMenuVisible) {\n    return;\n  }\n\n  [menuController showMenuFromView:self rect:self.bounds];\n#endif"
+        )
+        # 修复 UIPasteboard
+        content = content.gsub(
+          /UIPasteboard \*pasteboard = \[UIPasteboard generalPasteboard\];/,
+          "#if !TARGET_OS_TV\n  UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];\n  pasteboard.items = @[ item ];\n#endif"
+        )
+        File.write(rct_text_view, content)
+        Pod::UI.puts "✅ Fixed RCTTextView.mm for tvOS"
+      end
+    end
+
+    # 修复 RCTUITextView.mm
+    rct_uitext_view = File.join(rn_path, 'Libraries/Text/TextInput/Multiline/RCTUITextView.mm')
+    if File.exist?(rct_uitext_view)
+      content = File.read(rct_uitext_view)
+      # 检查是否已经修复过
+      unless content.include?('#if !TARGET_OS_TV') && content.include?('scrollsToTop')
+        content = content.gsub(
+          /self\.scrollsToTop = NO;/,
+          "#if !TARGET_OS_TV\n    self.scrollsToTop = NO;\n#endif"
+        )
+        File.write(rct_uitext_view, content)
+        Pod::UI.puts "✅ Fixed RCTUITextView.mm for tvOS"
+      end
+    end
+  end
   
   post_install do |installer|
     # https://github.com/facebook/react-native/blob/main/packages/react-native/scripts/react_native_pods.rb#L197-L202
@@ -93,6 +163,9 @@ target 'XStreaming' do
     
     # 修复 glog tvOS 问题
     fix_glog_for_tvos(installer)
+    
+    # 修复 React Native Text 组件 tvOS 问题
+    fix_rn_text_for_tvos(installer)
     
     # tvOS 部署目标配置
     installer.pods_project.targets.each do |target|
