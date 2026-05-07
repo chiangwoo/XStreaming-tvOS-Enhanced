@@ -30,7 +30,7 @@ target 'XStreaming' do
     :app_path => "#{Pod::Config.instance.installation_root}/..",
     # 禁用 Fabric (New Architecture)
     :fabric_enabled => false,
-    # 禁用 Hermes
+    # 启用 Hermes
     :hermes_enabled => true
   )
 
@@ -44,15 +44,55 @@ target 'XStreaming' do
     # Pods for UI testing
   end
 
+  # ============================================
+  # 修复 glog syscall tvOS 不兼容问题
+  # glog 在 tvOS 上使用 syscall() 获取线程 ID，但 tvOS 禁用了 syscall
+  # ============================================
+  def fix_glog_for_tvos(installer)
+    glog_utilities = File.join(installer.sandbox_root, 'Pods/glog/src/utilities.cc')
+    glog_raw_logging = File.join(installer.sandbox_root, 'Pods/glog/src/raw_logging.cc')
+    
+    # 修复 utilities.cc
+    if File.exist?(glog_utilities)
+      content = File.read(glog_utilities)
+      # 检查是否已经修复过
+      unless content.include?('TARGET_OS_TV')
+        # 替换 syscall(__NR_gettid) 为条件编译 (在 tvOS 上设为 -1)
+        content = content.gsub(
+          /pid_t tid = syscall\(__NR_gettid\);/,
+          "#if !defined(TARGET_OS_TV) || !TARGET_OS_TV\npid_t tid = syscall(__NR_gettid);\n#else\npid_t tid = -1;\n#endif"
+        )
+        File.write(glog_utilities, content)
+        Pod::UI.puts "✅ Fixed glog utilities.cc for tvOS"
+      end
+    end
+    
+    # 修复 raw_logging.cc
+    if File.exist?(glog_raw_logging)
+      content = File.read(glog_raw_logging)
+      # 检查是否已经修复过
+      unless content.include?('TARGET_OS_TV')
+        # 替换 syscall(__NR_gettid) 为条件编译 (在 tvOS 上设为 -1)
+        content = content.gsub(
+          /pid_t tid = syscall\(__NR_gettid\);/,
+          "#if !defined(TARGET_OS_TV) || !TARGET_OS_TV\npid_t tid = syscall(__NR_gettid);\n#else\npid_t tid = -1;\n#endif"
+        )
+        File.write(glog_raw_logging, content)
+        Pod::UI.puts "✅ Fixed glog raw_logging.cc for tvOS"
+      end
+    end
+  end
+  
   post_install do |installer|
     # https://github.com/facebook/react-native/blob/main/packages/react-native/scripts/react_native_pods.rb#L197-L202
     react_native_post_install(
       installer,
       config[:reactNativePath],
-      :mac_catalyst_enabled => false,
-      # 确保旧架构
-      :fabric_enabled => false
+      :mac_catalyst_enabled => false
     )
+    
+    # 修复 glog tvOS 问题
+    fix_glog_for_tvos(installer)
     
     # tvOS 部署目标配置
     installer.pods_project.targets.each do |target|
@@ -77,9 +117,6 @@ target 'XStreaming' do
         end
       end
     end
-    
-    # 修复 Xcode 12.5+ M1 问题
-    __apply_Xcode_12_5_M1_post_install_workaround(installer)
   end
 
 end
