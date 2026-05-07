@@ -153,6 +153,21 @@ target 'XStreaming' do
     end
   end
   
+  # ============================================
+  # 修复 PrivacyInfo.xcprivacy 重复问题
+  # 删除根目录的 PrivacyInfo.xcprivacy，保留 XStreaming/ 目录中的版本
+  # 避免 Xcode 报 "Multiple commands produce PrivacyInfo.xcprivacy" 错误
+  # ============================================
+  def fix_privacy_info_duplicate(installer)
+    project_root = File.expand_path('..', __dir__)
+    root_privacy = File.join(project_root, 'ios/PrivacyInfo.xcprivacy')
+    
+    if File.exist?(root_privacy)
+      File.delete(root_privacy)
+      Pod::UI.puts "✅ Removed duplicate PrivacyInfo.xcprivacy from ios/"
+    end
+  end
+  
   post_install do |installer|
     # https://github.com/facebook/react-native/blob/main/packages/react-native/scripts/react_native_pods.rb#L197-L202
     react_native_post_install(
@@ -160,6 +175,9 @@ target 'XStreaming' do
       config[:reactNativePath],
       :mac_catalyst_enabled => false
     )
+    
+    # 修复 PrivacyInfo.xcprivacy 重复问题
+    fix_privacy_info_duplicate(installer)
     
     # 修复 glog tvOS 问题
     fix_glog_for_tvos(installer)
