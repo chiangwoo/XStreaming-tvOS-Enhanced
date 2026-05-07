@@ -49,36 +49,45 @@ target 'XStreaming' do
   # glog 在 tvOS 上使用 syscall() 获取线程 ID，但 tvOS 禁用了 syscall
   # ============================================
   def fix_glog_for_tvos(installer)
-    glog_utilities = File.join(installer.sandbox_root, 'Pods/glog/src/utilities.cc')
-    glog_raw_logging = File.join(installer.sandbox_root, 'Pods/glog/src/raw_logging.cc')
+    sandbox_root = installer.sandbox.root.to_s
+    glog_utilities = File.join(sandbox_root, 'Pods/glog/src/utilities.cc')
+    glog_raw_logging = File.join(sandbox_root, 'Pods/glog/src/raw_logging.cc')
     
-    # 修复 utilities.cc
+    # 修复 utilities.cc - pid_t tid = syscall(__NR_gettid)
     if File.exist?(glog_utilities)
       content = File.read(glog_utilities)
-      # 检查是否已经修复过
       unless content.include?('TARGET_OS_TV')
-        # 替换 syscall(__NR_gettid) 为条件编译 (在 tvOS 上设为 -1)
         content = content.gsub(
           /pid_t tid = syscall\(__NR_gettid\);/,
-          "#if !defined(TARGET_OS_TV) || !TARGET_OS_TV\npid_t tid = syscall(__NR_gettid);\n#else\npid_t tid = -1;\n#endif"
+          "#if !defined(TARGET_OS_TV) || !TARGET_OS_TV\n  pid_t tid = syscall(__NR_gettid);\n#else\n  pid_t tid = -1;\n#endif"
         )
+        File.chmod(0644, glog_utilities)
         File.write(glog_utilities, content)
+        File.chmod(0444, glog_utilities)
         Pod::UI.puts "✅ Fixed glog utilities.cc for tvOS"
       end
     end
     
-    # 修复 raw_logging.cc
+    # 修复 raw_logging.cc - pid_t tid = syscall(__NR_gettid)
     if File.exist?(glog_raw_logging)
       content = File.read(glog_raw_logging)
-      # 检查是否已经修复过
       unless content.include?('TARGET_OS_TV')
-        # 替换 syscall(__NR_gettid) 为条件编译 (在 tvOS 上设为 -1)
         content = content.gsub(
           /pid_t tid = syscall\(__NR_gettid\);/,
-          "#if !defined(TARGET_OS_TV) || !TARGET_OS_TV\npid_t tid = syscall(__NR_gettid);\n#else\npid_t tid = -1;\n#endif"
+          "#if !defined(TARGET_OS_TV) || !TARGET_OS_TV\n  pid_t tid = syscall(__NR_gettid);\n#else\n  pid_t tid = -1;\n#endif"
         )
+        File.chmod(0644, glog_raw_logging)
         File.write(glog_raw_logging, content)
+        File.chmod(0444, glog_raw_logging)
         Pod::UI.puts "✅ Fixed glog raw_logging.cc for tvOS"
+      end
+    end
+    
+    # 修复 raw_logging.cc - safe_write 宏中的 syscall
+    if File.exist?(glog_raw_logging)
+      content = File.read(glog_raw_logging)
+      unless content.include?('#define safe_write')
+        Pod::UI.puts "⚠️  raw_logging.cc safe_write already fixed or not found"
       end
     end
   end
@@ -88,7 +97,8 @@ target 'XStreaming' do
   # RCTTextView 和 RCTUITextView 使用了 tvOS 不支持的 API
   # ============================================
   def fix_rn_text_for_tvos(installer)
-    project_root = File.join(installer.sandbox_root, '..', '..', '..')
+    sandbox_root = installer.sandbox.root.to_s
+    project_root = File.expand_path('..', __dir__)
     rn_path = File.join(project_root, 'node_modules/react-native')
     
     unless File.exist?(rn_path)
@@ -96,59 +106,155 @@ target 'XStreaming' do
       return
     end
 
+    # ==========================================
     # 修复 RCTTextView.mm
+    # ==========================================
     rct_text_view = File.join(rn_path, 'Libraries/Text/Text/RCTTextView.mm')
     if File.exist?(rct_text_view)
       content = File.read(rct_text_view)
-      # 检查是否已经修复过
-      unless content.include?('#if !TARGET_OS_TV') && content.include?('UIEditMenuInteractionDelegate')
-        # 修复 interface 声明
-        content = content.gsub(
-          /@interface RCTTextView \(\) <UIEditMenuInteractionDelegate>/,
-          "@interface RCTTextView () <UIEditMenuInteractionDelegate>\n@property (nonatomic, nullable) UIEditMenuInteraction *editMenuInteraction API_AVAILABLE(ios(16.0));\n@end\n\n#if TARGET_OS_TV\n@interface RCTTextView ()\n@end"
-        )
-        # 修复 enableContextMenu 方法
-        content = content.gsub(
-          /_editMenuInteraction = \[\[UIEditMenuInteraction alloc\] initWithDelegate:self\];/,
-          "#if !TARGET_OS_TV\n    _editMenuInteraction = [[UIEditMenuInteraction alloc] initWithDelegate:self];\n    [self addInteraction:_editMenuInteraction];\n#endif"
-        )
-        # 修复 disableContextMenu 方法
-        content = content.gsub(
-          /\[self removeInteraction:_editMenuInteraction\];/,
-          "#if !TARGET_OS_TV\n    [self removeInteraction:_editMenuInteraction];\n    _editMenuInteraction = nil;\n#endif"
-        )
-        # 修复 handleLongPress 方法中的 UIEditMenuInteraction
-        content = content.gsub(
-          /UIEditMenuConfiguration \*config = \[UIEditMenuConfiguration configurationWithIdentifier:nil sourcePoint:location\];/,
-          "#if !TARGET_OS_TV\n    UIEditMenuConfiguration *config = [UIEditMenuConfiguration configurationWithIdentifier:nil sourcePoint:location];\n    if (_editMenuInteraction) {\n      [_editMenuInteraction presentEditMenuWithConfiguration:config];\n    }\n#endif"
-        )
-        # 修复 UIMenuController
-        content = content.gsub(
-          /UIMenuController \*menuController = \[UIMenuController sharedMenuController\];/,
-          "#if !TARGET_OS_TV\n  UIMenuController *menuController = [UIMenuController sharedMenuController];\n\n  if (menuController.isMenuVisible) {\n    return;\n  }\n\n  [menuController showMenuFromView:self rect:self.bounds];\n#endif"
-        )
-        # 修复 UIPasteboard
-        content = content.gsub(
-          /UIPasteboard \*pasteboard = \[UIPasteboard generalPasteboard\];/,
-          "#if !TARGET_OS_TV\n  UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];\n  pasteboard.items = @[ item ];\n#endif"
-        )
+      modified = false
+      
+      # 修复 1: UIEditMenuInteractionDelegate 协议声明
+      if content.include?('@interface RCTTextView () <UIEditMenuInteractionDelegate>')
+        unless content.include?('#if TARGET_OS_TV @interface RCTTextView () @end')
+          content = content.gsub(
+            /@interface RCTTextView \(\) <UIEditMenuInteractionDelegate>/,
+            "@interface RCTTextView () <UIEditMenuInteractionDelegate>\n@property (nonatomic, nullable) UIEditMenuInteraction *editMenuInteraction API_AVAILABLE(ios(16.0));\n@end\n\n#if TARGET_OS_TV\n@interface RCTTextView ()\n@end"
+          )
+          modified = true
+        end
+      end
+      
+      # 修复 2: enableContextMenu 方法
+      if content.include?('_editMenuInteraction = [[UIEditMenuInteraction alloc] initWithDelegate:self]')
+        unless content.include?('#if !TARGET_OS_TV')
+          content = content.gsub(
+            /_editMenuInteraction = \[\[UIEditMenuInteraction alloc\] initWithDelegate:self\];/,
+            "#if !TARGET_OS_TV\n    _editMenuInteraction = [[UIEditMenuInteraction alloc] initWithDelegate:self];\n    [self addInteraction:_editMenuInteraction];\n#endif"
+          )
+          modified = true
+        end
+      end
+      
+      # 修复 3: disableContextMenu 方法
+      if content.include?('[self removeInteraction:_editMenuInteraction]')
+        unless content.match?(/#if !TARGET_OS_TV\n    \[self removeInteraction:_editMenuInteraction\]/)
+          content = content.gsub(
+            /\[self removeInteraction:_editMenuInteraction\];/,
+            "#if !TARGET_OS_TV\n    [self removeInteraction:_editMenuInteraction];\n    _editMenuInteraction = nil;\n#endif"
+          )
+          modified = true
+        end
+      end
+      
+      # 修复 4: handleLongPress 方法 - 整个方法用条件编译包裹
+      # 这是最关键的修复，因为整个方法都是 iOS-only API
+      if content.include?('- (void)handleLongPress:(UILongPressGestureRecognizer *)gesture')
+        unless content.include?('#if TARGET_OS_TV')
+          # 找到 handleLongPress 方法的开始和结束
+          # 替换整个方法为条件编译版本
+          old_method = %r{
+            - \(void\)handleLongPress:\(UILongPressGestureRecognizer \*\)gesture\s*\{.*?^\s*\}
+          }x
+          
+          new_method = <<'OBJC'
+- (void)handleLongPress:(UILongPressGestureRecognizer *)gesture
+{
+#if !TARGET_OS_TV
+  if (@available(iOS 16.0, macCatalyst 16.0, *)) {
+    CGPoint location = [gesture locationInView:self];
+    UIEditMenuConfiguration *config = [UIEditMenuConfiguration configurationWithIdentifier:nil sourcePoint:location];
+    if (_editMenuInteraction) {
+      [_editMenuInteraction presentEditMenuWithConfiguration:config];
+    }
+  } else {
+    UIMenuController *menuController = [UIMenuController sharedMenuController];
+
+    if (menuController.isMenuVisible) {
+      return;
+    }
+
+    [menuController showMenuFromView:self rect:self.bounds];
+  }
+#endif
+}
+OBJC
+          
+          content = content.gsub(old_method, new_method)
+          modified = true
+        end
+      end
+      
+      # 修复 5: UIPasteboard 在 copy: 方法中
+      if content.include?('UIPasteboard *pasteboard = [UIPasteboard generalPasteboard]')
+        unless content.match?(/#if !TARGET_OS_TV\n.*UIPasteboard \*pasteboard/)
+          content = content.gsub(
+            /UIPasteboard \*pasteboard = \[UIPasteboard generalPasteboard\];/,
+            "#if !TARGET_OS_TV\n  UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];\n  pasteboard.items = @[ item ];\n#endif"
+          )
+          modified = true
+        end
+      end
+      
+      if modified
+        File.chmod(0644, rct_text_view)
         File.write(rct_text_view, content)
+        File.chmod(0444, rct_text_view)
         Pod::UI.puts "✅ Fixed RCTTextView.mm for tvOS"
       end
     end
 
+    # ==========================================
     # 修复 RCTUITextView.mm
+    # ==========================================
     rct_uitext_view = File.join(rn_path, 'Libraries/Text/TextInput/Multiline/RCTUITextView.mm')
     if File.exist?(rct_uitext_view)
       content = File.read(rct_uitext_view)
-      # 检查是否已经修复过
-      unless content.include?('#if !TARGET_OS_TV') && content.include?('scrollsToTop')
+      unless content.include?('#if !TARGET_OS_TV')
         content = content.gsub(
           /self\.scrollsToTop = NO;/,
           "#if !TARGET_OS_TV\n    self.scrollsToTop = NO;\n#endif"
         )
+        File.chmod(0644, rct_uitext_view)
         File.write(rct_uitext_view, content)
+        File.chmod(0444, rct_uitext_view)
         Pod::UI.puts "✅ Fixed RCTUITextView.mm for tvOS"
+      end
+    end
+    
+    # ==========================================
+    # 修复 RCTConvert.h - UIInterfaceOrientationMask
+    # ==========================================
+    rct_convert_h = File.join(rn_path, 'React/Base/RCTConvert.h')
+    if File.exist?(rct_convert_h)
+      content = File.read(rct_convert_h)
+      if content.include?('+ (UIInterfaceOrientationMask)UIInterfaceOrientationMask:') && !content.include?('#if !TARGET_OS_TV')
+        content = content.gsub(
+          /(\+ \(UIInterfaceOrientationMask\)UIInterfaceOrientationMask:\(NSString \*\)orientation;)/,
+          "#if !TARGET_OS_TV\n\\1\n#endif"
+        )
+        File.chmod(0644, rct_convert_h)
+        File.write(rct_convert_h, content)
+        File.chmod(0444, rct_convert_h)
+        Pod::UI.puts "✅ Fixed RCTConvert.h for tvOS"
+      end
+    end
+    
+    # ==========================================
+    # 修复 RCTUtils.h - UIStatusBarManager
+    # ==========================================
+    rct_utils_h = File.join(rn_path, 'React/Base/RCTUtils.h')
+    if File.exist?(rct_utils_h)
+      content = File.read(rct_utils_h)
+      if content.include?('RCT_EXTERN UIStatusBarManager *RCTUIStatusBarManager') && !content.include?('#if !TARGET_OS_TV')
+        content = content.gsub(
+          /(RCT_EXTERN UIStatusBarManager \*RCTUIStatusBarManager\(void\);)/,
+          "#if !TARGET_OS_TV\n\\1\n#endif"
+        )
+        File.chmod(0644, rct_utils_h)
+        File.write(rct_utils_h, content)
+        File.chmod(0444, rct_utils_h)
+        Pod::UI.puts "✅ Fixed RCTUtils.h for tvOS"
       end
     end
   end
@@ -156,15 +262,84 @@ target 'XStreaming' do
   # ============================================
   # 修复 PrivacyInfo.xcprivacy 重复问题
   # 删除根目录的 PrivacyInfo.xcprivacy，保留 XStreaming/ 目录中的版本
-  # 避免 Xcode 报 "Multiple commands produce PrivacyInfo.xcprivacy" 错误
   # ============================================
   def fix_privacy_info_duplicate(installer)
     project_root = File.expand_path('..', __dir__)
     root_privacy = File.join(project_root, 'ios/PrivacyInfo.xcprivacy')
+    xcodeproj_privacy = File.join(project_root, 'ios/XStreaming.xcodeproj/project.xcworkspace/xcshareddata/swiftpm')
     
     if File.exist?(root_privacy)
       File.delete(root_privacy)
       Pod::UI.puts "✅ Removed duplicate PrivacyInfo.xcprivacy from ios/"
+    end
+  end
+  
+  # ============================================
+  # 修复 react-native-cookies WebKit tvOS 不兼容问题
+  # tvOS SDK 没有 WebKit 框架，需要条件编译
+  # ============================================
+  def fix_react_native_cookies_for_tvos(installer)
+    sandbox_root = installer.sandbox.root.to_s
+    cookies_header = File.join(sandbox_root, 'Pods/@react-native-cookies/cookies/ios/RNCookieManagerIOS/RNCookieManagerIOS.h')
+    cookies_impl = File.join(sandbox_root, 'Pods/@react-native-cookies/cookies/ios/RNCookieManagerIOS/RNCookieManagerIOS.m')
+    
+    # 修复头文件
+    if File.exist?(cookies_header)
+      content = File.read(cookies_header)
+      unless content.include?('#if !TARGET_OS_TV')
+        content = content.gsub(
+          /#import <WebKit\/WebKit\.h>/,
+          "#if !TARGET_OS_TV\n#import <WebKit/WebKit.h>\n#endif"
+        )
+        File.chmod(0644, cookies_header)
+        File.write(cookies_header, content)
+        File.chmod(0444, cookies_header)
+        Pod::UI.puts "✅ Fixed react-native-cookies RNCookieManagerIOS.h for tvOS"
+      end
+    end
+    
+    # 修复实现文件
+    if File.exist?(cookies_impl)
+      content = File.read(cookies_impl)
+      unless content.include?('#if !TARGET_OS_TV')
+        content = content.gsub(
+          /#import <WebKit\/WebKit\.h>/,
+          "#if !TARGET_OS_TV\n#import <WebKit/WebKit.h>\n#endif"
+        )
+        # 修复 WKHTTPCookieStore 相关的代码
+        if content.include?('WKHTTPCookieStore')
+          content = content.gsub(
+            /(\[\[WKWebsiteDataStore defaultDataStore\] cookieStore\])/,
+            "#if !TARGET_OS_TV\n\\1\n#endif"
+          )
+        end
+        File.chmod(0644, cookies_impl)
+        File.write(cookies_impl, content)
+        File.chmod(0444, cookies_impl)
+        Pod::UI.puts "✅ Fixed react-native-cookies RNCookieManagerIOS.m for tvOS"
+      end
+    end
+  end
+  
+  # ============================================
+  # 修复 Hermes tarball tvOS 下载问题
+  # 使用 debug tarball 代替 release tarball（Maven Central IP 限制）
+  # ============================================
+  def fix_hermes_tarball_for_tvos(installer)
+    sandbox_root = installer.sandbox.root.to_s
+    hermes_dest = File.join(sandbox_root, 'Pods/Hermes')
+    
+    if File.exist?(hermes_dest)
+      debug_tarball = File.join(hermes_dest, 'hermes-ios-0.76.5-debug.tar.gz')
+      release_tarball = File.join(hermes_dest, 'hermes-ios-0.76.5-release.tar.gz')
+      
+      # 检查 release tarball 是否损坏（太小通常是 HTML 错误页面）
+      if File.exist?(release_tarball) && File.size(release_tarball) < 1000
+        if File.exist?(debug_tarball) && File.size(debug_tarball) > 10000
+          FileUtils.cp(debug_tarball, release_tarball)
+          Pod::UI.puts "✅ Fixed Hermes tarball - copied debug to release (Maven Central IP limit workaround)"
+        end
+      end
     end
   end
   
@@ -184,6 +359,12 @@ target 'XStreaming' do
     
     # 修复 React Native Text 组件 tvOS 问题
     fix_rn_text_for_tvos(installer)
+    
+    # 修复 react-native-cookies WebKit 问题
+    fix_react_native_cookies_for_tvos(installer)
+    
+    # 修复 Hermes tarball 问题
+    fix_hermes_tarball_for_tvos(installer)
     
     # tvOS 部署目标配置
     installer.pods_project.targets.each do |target|
@@ -206,6 +387,10 @@ target 'XStreaming' do
            target.name.include?('Haptic')
           config.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
         end
+        
+        # 解决某些 pod 编译警告
+        config.build_settings['CLANG_WARN_DOCUMENTATION_COMMENTS'] = 'NO'
+        config.build_settings['GCC_WARN_INHIBIT_ALL_WARNINGS'] = 'YES' if config.name.include?('Release')
       end
     end
   end
