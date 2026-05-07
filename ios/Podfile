@@ -5,7 +5,9 @@ require Pod::Executable.execute_command('node', ['-p',
     {paths: [process.argv[1]]},
   )', __dir__]).strip
 
-platform :ios, min_ios_version_supported
+# iOS 平台版本
+platform :ios, '15.1'
+
 prepare_react_native_project!
 
 linkage = ENV['USE_FRAMEWORKS']
@@ -19,7 +21,6 @@ target 'XStreaming' do
 
   use_react_native!(
     :path => config[:reactNativePath],
-    # An absolute path to your application root.
     :app_path => "#{Pod::Config.instance.installation_root}/.."
   )
 
@@ -28,14 +29,44 @@ target 'XStreaming' do
     # Pods for testing
   end
 
+  target 'XStreamingUITests' do
+    inherit! :complete
+    # Pods for UI testing
+  end
+
   post_install do |installer|
     # https://github.com/facebook/react-native/blob/main/packages/react-native/scripts/react_native_pods.rb#L197-L202
     react_native_post_install(
       installer,
       config[:reactNativePath],
-      :mac_catalyst_enabled => false,
-      # :ccache_enabled => true
+      :mac_catalyst_enabled => false
     )
+    
+    # tvOS 部署目标配置
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        # iOS 部署目标
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
+        
+        # tvOS 部署目标（用于跨平台库）
+        if config.build_settings['TVOS_DEPLOYMENT_TARGET']
+          config.build_settings['TVOS_DEPLOYMENT_TARGET'] = '15.1'
+        end
+        
+        # 针对 tvOS 的特殊配置
+        config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= ['$(inherited)']
+        config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] << 'TARGET_OS_TV=1'
+        
+        # 禁用某些仅 iOS 的特性
+        if target.name.include?('CoreMotion') || 
+           target.name.include?('Battery') ||
+           target.name.include?('Haptic')
+          config.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
+        end
+      end
+    end
+    
+    # 修复 Xcode 12.5+ M1 问题
     __apply_Xcode_12_5_M1_post_install_workaround(installer)
   end
 
